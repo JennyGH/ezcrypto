@@ -1,0 +1,8 @@
+[B|b]uild*/
+[B|b]uilt*/
+[D|d]ev*/
+[P|p]ack*/
+.vs/
+.svn/
+.vscode/
+obj/
