@@ -3,32 +3,23 @@
 
 using namespace EZCRYPTO_NS;
 
-void zero_padding(bytes_t& bytes, const size_t& align)
+size_t EZCRYPTO_NS::safe_memcpy(const void* src, const size_t& src_size, void* dst, const size_t& dst_size)
 {
-    const size_t& length = bytes.length();
-    if (length == 0)
+    if (nullptr == dst || 0 == dst_size)
     {
-        return;
+        return 0;
     }
-    const size_t& remain = align - (length % align);
-    if (remain == 0)
+    errno_t err = ::memcpy_s(dst, dst_size, src, src_size);
+    if (0 == err)
     {
-        return;
+        return src_size;
     }
-    bytes.append(remain, 0x00);
+    return 0;
 }
 
-void pkcs7_padding(bytes_t& bytes, const size_t& align)
+bool EZCRYPTO_NS::is_bigendian()
 {
-    const size_t& length = bytes.length();
-    if (length == 0)
-    {
-        return;
-    }
-    const size_t& remain = align - (length % align);
-    if (remain == 0)
-    {
-        return;
-    }
-    bytes.append(remain, remain);
+    static const uint16_t data  = 0x1234;
+    static const bool     value = reinterpret_cast<const uint8_t*>(&data)[0] == 0x12;
+    return value;
 }

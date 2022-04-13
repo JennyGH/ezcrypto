@@ -190,6 +190,7 @@ link_directories(
 # 添加项目目录.
 add_subdirectory(src/ezcrypto)
 add_subdirectory(tests/sm4_test)
+add_subdirectory(tests/blowfish_test)
 
 # 添加安装命令.
 install(

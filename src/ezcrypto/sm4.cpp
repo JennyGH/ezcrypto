@@ -2,6 +2,9 @@
 #include "sm4.h"
 #include "utils.h"
 
+#define HEX(obj)  _hex_encode(obj)
+#define CHEX(obj) _hex_encode(obj).c_str()
+
 using namespace EZCRYPTO_NS;
 
 static const word_t FK[] = {0xa3b1bac6, 0x56aa3350, 0x677d9197, 0xb27022dc};
@@ -28,7 +31,38 @@ static const byte_t SBOX[] = {
     0x0c, 0x96, 0x77, 0x7e, 0x65, 0xb9, 0xf1, 0x09, 0xc5, 0x6e, 0xc6, 0x84, 0x18, 0xf0, 0x7d, 0xec, 0x3a, 0xdc, 0x4d,
     0x20, 0x79, 0xee, 0x5f, 0x3e, 0xd7, 0xcb, 0x39, 0x48};
 
-static inline byte_t _SBox(byte_t a)
+const size_t sm4::block_size = 16;
+
+static inline std::string _hex_encode(byte_t e)
+{
+    std::string hex;
+    char        buffer[3] = {0};
+    ::sprintf_s(buffer, "%02x", e);
+    hex.append(buffer, 2);
+    return hex;
+}
+
+static inline std::string _hex_encode(word_t w)
+{
+    std::string hex;
+    char        buffer[9] = {0};
+    ::sprintf_s(buffer, "%08x", w);
+    hex.append(buffer, 8);
+    return hex;
+}
+
+template <typename container_type>
+static inline std::string _hex_encode(const container_type& src)
+{
+    std::string hex;
+    for (const auto& e : src)
+    {
+        hex.append(_hex_encode(e));
+    }
+    return hex;
+}
+
+static inline const byte_t& _SBox(const byte_t& a)
 {
     return SBOX[(a >> 4 & 0x0f) * 0x10 + (a & 0x0f)];
 }
@@ -36,10 +70,10 @@ static inline byte_t _SBox(byte_t a)
 // B = (b0, b1, b2, b3) = T(A) = (SBox(a0), SBox(a1), SBox(a2), SBox(a3))
 static inline word_t _tau(const word_t& A)
 {
-    byte_t b0 = _SBox(byte_t((A & 0xff000000) >> 24));
-    byte_t b1 = _SBox(byte_t((A & 0x00ff0000) >> 16));
-    byte_t b2 = _SBox(byte_t((A & 0x0000ff00) >> 8));
-    byte_t b3 = _SBox(byte_t((A & 0x000000ff) >> 0));
+    const byte_t& b0 = _SBox(byte_t((A & 0xff000000) >> 24));
+    const byte_t& b1 = _SBox(byte_t((A & 0x00ff0000) >> 16));
+    const byte_t& b2 = _SBox(byte_t((A & 0x0000ff00) >> 8));
+    const byte_t& b3 = _SBox(byte_t((A & 0x000000ff) >> 0));
     return (b0 << 24) | (b1 << 16) | (b2 << 8) | (b3);
 }
 
@@ -77,51 +111,139 @@ static inline words_t _rks_generator(const word_t& K0, const word_t& K1, const w
 {
     word_t  K[] = {K0, K1, K2, K3};
     words_t rks;
+    rks.resize(32);
     for (size_t i = 0; i < 32; i++)
     {
-        word_t rk = K[0] ^ _T1(K[1] ^ K[2] ^ K[3] ^ CK[i]);
-        rks.append(1, rk);
-        K[0] = K[1];
-        K[1] = K[2];
-        K[2] = K[3];
-        K[3] = rk;
+        const word_t rk = K[0] ^ _T1(K[1] ^ K[2] ^ K[3] ^ CK[i]);
+        K[0]            = K[1];
+        K[1]            = K[2];
+        K[2]            = K[3];
+        K[3]            = rk;
+        rks[i]          = rk;
     }
     return rks;
 }
 
 static inline words_t _rks_generator(const words_t& K)
 {
+    if (K.size() != 4)
+    {
+        return words_t();
+    }
     return _rks_generator(K[0], K[1], K[2], K[3]);
 }
 
-template <typename T>
-static inline T _from_bytes(const byte_t* bytes, const size_t& length)
+static inline bytes_t _make_zero_padding(const bytes_t& bytes, const size_t& block_size)
 {
-    if (nullptr == bytes)
+    bytes_t       padding;
+    const size_t& length = bytes.size();
+    const size_t& remain = block_size - (length % block_size);
+    if (remain > 0)
     {
+        padding.assign(remain, 0x00);
+    }
+    return padding;
+}
+
+static inline bytes_t _make_pkcs7_padding(const bytes_t& bytes, const size_t& block_size)
+{
+    bytes_t       padding;
+    const size_t& length = bytes.size();
+    const size_t& remain = block_size - (length % block_size);
+    if (remain > 0)
+    {
+        padding.assign(remain, remain);
+    }
+    return padding;
+}
+
+static inline size_t _detect_padding_size(const bytes_t& bytes, const padding_t& padding_mode)
+{
+    const size_t bytes_size = bytes.size();
+    size_t       size       = 0;
+    if (bytes.empty())
+    {
+        return size;
+    }
+    switch (padding_mode)
+    {
+        case padding_t::ZERO:
+        {
+            for (size_t i = bytes_size - 1; i > 0; i--)
+            {
+                if (bytes[i] != 0x00)
+                {
+                    break;
+                }
+                size++;
+            }
+            break;
+        }
+        case padding_t::PKCS7:
+        {
+            const byte_t end = bytes[bytes_size - 1];
+            if (end > bytes_size)
+            {
+                return size;
+            }
+            byte_t last = bytes[bytes_size - end];
+            for (size_t i = bytes_size - end; i < bytes_size; i++)
+            {
+                if (bytes[i] != last)
+                {
+                    break;
+                }
+                size++;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    return size;
+}
+
+template <typename T>
+static inline T _bytes_to(const byte_t* bytes, const size_t& length, bool& success)
+{
+    if (nullptr == bytes || length < sizeof(T))
+    {
+        success = false;
         return (T)0;
     }
 
-    const size_t rounds = EZMIN(length, sizeof(T));
-
     T t = 0;
-    for (size_t i = 0; i < rounds; i++)
+
+    success = sizeof(t) == safe_memcpy(bytes, sizeof(T), &t, sizeof(T));
+    return to_bigendian(t);
+}
+
+static inline word_t _bytes_to_word(const byte_t* bytes, const size_t& length, bool& success)
+{
+    return _bytes_to<word_t>(bytes, length, success);
+}
+
+template <typename container_type>
+static inline word_t _bytes_to_word(const container_type& bytes, bool& success)
+{
+    return _bytes_to<word_t>((const byte_t*)bytes.data(), bytes.size(), success);
+}
+
+static inline words_t _bytes_to_words(const byte_t* bytes, const size_t& length, bool& success)
+{
+    words_t      words;
+    const size_t word_count = length / sizeof(word_t);
+    words.resize(word_count);
+    for (size_t i = 0; i < word_count; i++)
     {
-        t |= bytes[i];
-        t <<= 8;
+        words[i] = _bytes_to<word_t>(bytes + i * sizeof(word_t), length - i * sizeof(word_t), success);
+        if (!success)
+        {
+            words.clear();
+            break;
+        }
     }
-    return t;
-}
-
-static inline word_t _word_from_bytes(const byte_t* bytes, const size_t& length)
-{
-    return _from_bytes<word_t>(bytes, length);
-}
-
-template <typename T>
-static inline word_t _word_from_bytes(const std::basic_string<T>& bytes)
-{
-    return _from_bytes<word_t>((const byte_t*)bytes.data(), bytes.length());
+    return words;
 }
 
 static inline words_t _init_key(const byte_t* MK, const size_t& MK_length)
@@ -130,12 +252,20 @@ static inline words_t _init_key(const byte_t* MK, const size_t& MK_length)
     {
         return words_t();
     }
-    words_t      words;
     const size_t rounds = MK_length / sizeof(word_t);
+    words_t      words;
+    words.resize(rounds);
     for (size_t i = 0; i < rounds; i++)
     {
-        const word_t word = _word_from_bytes(MK + i * sizeof(word_t), MK_length - i * sizeof(word_t)) ^ FK[i];
-        words.append(1, word);
+        bool         success = false;
+        const word_t w       = _bytes_to_word(MK + i * sizeof(word_t), MK_length - i * sizeof(word_t), success) ^ FK[i];
+        if (!success)
+        {
+            // Bad convertion.
+            words.clear();
+            break;
+        }
+        words[i] = w;
     }
     return words;
 }
@@ -146,12 +276,14 @@ public:
     sm4_private()
         : _encrypt(false)
         , _mode(mode_t::ECB)
+        , _padding(padding_t::PKCS7)
     {
     }
 
     sm4_private(const sm4_private& that)
         : _encrypt(that._encrypt)
         , _mode(that._mode)
+        , _padding(that._padding)
         , _key(that._key)
         , _iv(that._iv)
         , _rks(that._rks)
@@ -162,13 +294,14 @@ public:
     ~sm4_private() {}
 
 public:
-    bool    _encrypt;
-    mode_t  _mode;
-    words_t _key;
-    words_t _iv;
-    words_t _rks;
-    words_t _output;
-    bytes_t _remain;
+    bool      _encrypt;
+    mode_t    _mode;
+    padding_t _padding;
+    words_t   _key;
+    words_t   _iv;
+    words_t   _rks;
+    bytes_t   _output;
+    bytes_t   _remain;
 };
 
 sm4::sm4(
@@ -192,8 +325,10 @@ sm4::sm4(
         }
         if (nullptr != iv && iv_length > 0)
         {
-            _data->_iv = _word_from_bytes(iv, iv_length);
+            bool success = false;
+            _data->_iv   = _bytes_to_words(iv, iv_length, success);
         }
+        _data->_padding = padding;
     }
 }
 
@@ -221,29 +356,6 @@ sm4::~sm4()
     }
 }
 
-sm4& sm4::update(const void* data, const size_t& length)
-{
-    if (nullptr != _data)
-    {
-        const size_t  count_of_words  = length / sizeof(word_t);
-        const size_t  remain_words    = length % sizeof(word_t);
-        const size_t  count_of_groups = count_of_words / 4;
-        const byte_t* bytes           = static_cast<const byte_t*>(data);
-        for (size_t i = 0; i < 32; i++)
-        {
-            const word_t& rki = _data->_rks[_data->_encrypt ? i : (31 - i)];
-            //_word_from_bytes(bytes + sizeof(word_t), length - sizeof(word_t))
-            //_F();
-        }
-    }
-    return *this;
-}
-
-size_t sm4::final(final_callback_t callback, void* context)
-{
-    return 0;
-}
-
 sm4& sm4::operator=(const sm4& that)
 {
     if (&that != this)
@@ -265,18 +377,138 @@ sm4& sm4::operator=(sm4&& that) noexcept
     return *this;
 }
 
+sm4& sm4::update(const void* data, const size_t& length)
+{
+    if (nullptr != data && length > 0 && nullptr != _data)
+    {
+        const size_t  remain_size = _data->_remain.size();
+        const size_t  total       = remain_size + length;
+        const size_t  blocks      = total / sm4::block_size;
+        const byte_t* bytes       = static_cast<const byte_t*>(data);
+
+        if (total < sm4::block_size)
+        {
+            append_to_container(data, length, _data->_remain);
+            return *this;
+        }
+
+        byte_t remain_blocks[sm4::block_size] = {0};
+        {
+            safe_memcpy(_data->_remain.data(), remain_size, remain_blocks, sizeof(remain_blocks));
+            safe_memcpy(
+                data,
+                sm4::block_size - remain_size,
+                remain_blocks + remain_size,
+                sm4::block_size - remain_size);
+        }
+
+        const byte_t* current = remain_blocks;
+
+        bool success = false;
+        for (size_t i = 0; i < blocks; i++)
+        {
+            word_t X[4] = {0};
+
+            for (size_t i = 0; i < 4; i++)
+            {
+                X[i] = _bytes_to_word(current + sizeof(word_t) * i, sizeof(word_t), success);
+                if (!success)
+                {
+                    return *this;
+                }
+            }
+
+            for (size_t i = 0; i < 32; i++)
+            {
+                const word_t& rki = _data->_rks[_data->_encrypt ? i : (31 - i)];
+                const word_t  Xi  = _F(X[0], X[1], X[2], X[3], rki);
+                X[0]              = X[1];
+                X[1]              = X[2];
+                X[2]              = X[3];
+                X[3]              = Xi;
+            }
+
+            X[0] = to_bigendian(X[0]);
+            X[1] = to_bigendian(X[1]);
+            X[2] = to_bigendian(X[2]);
+            X[3] = to_bigendian(X[3]);
+
+            std::swap(X[3], X[0]);
+            std::swap(X[2], X[1]);
+
+            append_to_container(X, sizeof(X), _data->_output);
+
+            if (i == 0)
+            {
+                current = bytes + sm4::block_size - remain_size;
+            }
+            else
+            {
+                current += sm4::block_size;
+            }
+        }
+
+        const size_t remain_bytes = total % sm4::block_size;
+        if (remain_bytes > 0)
+        {
+            _data->_remain.assign(bytes + length - remain_bytes, bytes + length);
+        }
+        else
+        {
+            _data->_remain.clear();
+        }
+    }
+    return *this;
+}
+
+size_t sm4::final(final_callback_t callback, void* context)
+{
+    if (nullptr == _data)
+    {
+        return 0;
+    }
+
+    size_t output_size = 0;
+    if (_data->_encrypt)
+    {
+        if (!_data->_remain.empty() || !_data->_output.empty())
+        {
+            switch (_data->_padding)
+            {
+                case padding_t::ZERO:
+                {
+                    update(_make_zero_padding(_data->_remain, sm4::block_size));
+                    break;
+                }
+                case padding_t::PKCS7:
+                {
+                    update(_make_pkcs7_padding(_data->_remain, sm4::block_size));
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        output_size = _data->_output.size();
+    }
+    else
+    {
+        const size_t padding_size = _detect_padding_size(_data->_output, _data->_padding);
+        output_size               = _data->_output.size() - padding_size;
+    }
+
+    if (nullptr != callback && output_size > 0)
+    {
+        output_size = callback(context, _data->_output.data(), output_size);
+    }
+
+    _data->_output.clear();
+    _data->_remain.clear();
+
+    return output_size;
+}
+
 sm4 sm4::ecb(bool encrypt, const padding_t& padding, const byte_t* key, const size_t& key_length)
 {
     return sm4(encrypt, mode_t::ECB, padding, key, key_length, nullptr, 0);
-}
-
-sm4 sm4::cbc(
-    bool             encrypt,
-    const padding_t& padding,
-    const byte_t*    key,
-    const size_t&    key_length,
-    const byte_t*    iv,
-    const size_t&    iv_length)
-{
-    return sm4(encrypt, mode_t::CBC, padding, key, key_length, iv, iv_length);
 }

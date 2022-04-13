@@ -1,36 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ezcrypto.h>
-#include <sm4.h>
-
-static inline std::string _hex_encode(ezcrypto::byte_t e)
-{
-    std::string hex;
-    char        buffer[3] = {0};
-    ::sprintf_s(buffer, "%02x", e);
-    hex.append(buffer, 2);
-    return hex;
-}
-
-static inline std::string _hex_encode(ezcrypto::word_t w)
-{
-    std::string hex;
-    char        buffer[9] = {0};
-    ::sprintf_s(buffer, "%08x", w);
-    hex.append(buffer, 8);
-    return hex;
-}
-
-template <typename container_type>
-static inline std::string _hex_encode(const container_type& src)
-{
-    std::string hex;
-    for (const auto& e : src)
-    {
-        hex.append(_hex_encode(e));
-    }
-    return hex;
-}
+#include <blowfish.h>
 
 static inline size_t _final_callback(void* context, const void* data, const size_t& length)
 {
@@ -47,25 +18,28 @@ static inline size_t _final_callback(void* context, const void* data, const size
 int main(int argc, char** argv)
 {
     static const ezcrypto::byte_t key[16] = {0x00};
-    static const ezcrypto::byte_t clear[] =
-        {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f};
+    static const ezcrypto::byte_t clear[16] =
+        {0x30, 0x31, 0x32, 0x33, 0x30, 0x31, 0x32, 0x33, 0x30, 0x31, 0x32, 0x33, 0x30, 0x31, 0x32, 0x33};
+    static const ezcrypto::byte_t expect_cipher[16] =
+        {0xdb, 0x73, 0xde, 0xa8, 0x9c, 0x51, 0xee, 0x23, 0xdb, 0x73, 0xde, 0xa8, 0x9c, 0x51, 0xee, 0x23};
     static const ezcrypto::padding_t padding = ezcrypto::padding_t::PKCS7;
 
     ezcrypto::bytes_t cipher;
     {
-        ezcrypto::sm4::ecb(true, padding, key, sizeof(key))
+        ezcrypto::blowfish::ecb(true, padding, key, sizeof(key))
             .update(clear, sizeof(clear))
             .final(_final_callback, &cipher);
     }
+    const bool is_cipher_correct =
+        sizeof(expect_cipher) == cipher.size() && ::memcmp(expect_cipher, cipher.data(), cipher.size()) == 0;
 
     ezcrypto::bytes_t result;
     {
-        ezcrypto::sm4::ecb(false, padding, key, sizeof(key))
+        ezcrypto::blowfish::ecb(false, padding, key, sizeof(key))
             .update(cipher.data(), cipher.size())
             .final(_final_callback, &result);
     }
 
     const bool correct = sizeof(clear) == result.size() && ::memcmp(clear, result.data(), result.size()) == 0;
-
     return 0;
 }

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <iostream>
 
 #ifdef SUPPORT_NOTHROW_NEW
 #    define SAFE_NEW    new (std::nothrow)
