@@ -203,30 +203,15 @@ static inline size_t _detect_padding_size(const bytes_t& bytes, const padding_t&
     return size;
 }
 
-template <typename T>
-static inline T _bytes_to(const byte_t* bytes, const size_t& length, bool& success)
-{
-    if (nullptr == bytes || length < sizeof(T))
-    {
-        success = false;
-        return (T)0;
-    }
-
-    T t = 0;
-
-    success = sizeof(t) == safe_memcpy(bytes, sizeof(T), &t, sizeof(T));
-    return to_bigendian(t);
-}
-
 static inline word_t _bytes_to_word(const byte_t* bytes, const size_t& length, bool& success)
 {
-    return _bytes_to<word_t>(bytes, length, success);
+    return bytes_to<word_t>(bytes, length, success);
 }
 
 template <typename container_type>
 static inline word_t _bytes_to_word(const container_type& bytes, bool& success)
 {
-    return _bytes_to<word_t>((const byte_t*)bytes.data(), bytes.size(), success);
+    return bytes_to<word_t>((const byte_t*)bytes.data(), bytes.size(), success);
 }
 
 static inline words_t _bytes_to_words(const byte_t* bytes, const size_t& length, bool& success)
@@ -236,7 +221,7 @@ static inline words_t _bytes_to_words(const byte_t* bytes, const size_t& length,
     words.resize(word_count);
     for (size_t i = 0; i < word_count; i++)
     {
-        words[i] = _bytes_to<word_t>(bytes + i * sizeof(word_t), length - i * sizeof(word_t), success);
+        words[i] = bytes_to<word_t>(bytes + i * sizeof(word_t), length - i * sizeof(word_t), success);
         if (!success)
         {
             words.clear();

@@ -191,6 +191,10 @@ link_directories(
 add_subdirectory(src/ezcrypto)
 add_subdirectory(tests/sm4_test)
 add_subdirectory(tests/blowfish_test)
+find_package(benchmark CONFIG)
+if(benchmark_FOUND)
+    add_subdirectory(tests/blowfish_bench_test)
+endif() # endif benchmark_FOUND
 
 # 添加安装命令.
 install(

@@ -1,3 +1,5 @@
+#include <chrono>
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ezcrypto.h>
@@ -17,11 +19,10 @@ static inline size_t _final_callback(void* context, const void* data, const size
 
 int main(int argc, char** argv)
 {
-    static const ezcrypto::byte_t key[16] = {0x00};
-    static const ezcrypto::byte_t clear[16] =
-        {0x30, 0x31, 0x32, 0x33, 0x30, 0x31, 0x32, 0x33, 0x30, 0x31, 0x32, 0x33, 0x30, 0x31, 0x32, 0x33};
-    static const ezcrypto::byte_t expect_cipher[16] =
-        {0xdb, 0x73, 0xde, 0xa8, 0x9c, 0x51, 0xee, 0x23, 0xdb, 0x73, 0xde, 0xa8, 0x9c, 0x51, 0xee, 0x23};
+    static const ezcrypto::byte_t key[16]  = {0x00};
+    static const ezcrypto::byte_t clear[8] = {0x00};
+    static const ezcrypto::byte_t expect_cipher[] =
+        {0x4e, 0xf9, 0x97, 0x45, 0x61, 0x98, 0xdd, 0x78, 0xb0, 0xd4, 0xac, 0xb2, 0x8a, 0xa5, 0xeb, 0xe3};
     static const ezcrypto::padding_t padding = ezcrypto::padding_t::PKCS7;
 
     ezcrypto::bytes_t cipher;
@@ -40,6 +41,7 @@ int main(int argc, char** argv)
             .final(_final_callback, &result);
     }
 
-    const bool correct = sizeof(clear) == result.size() && ::memcmp(clear, result.data(), result.size()) == 0;
+    const bool is_clear_correct = sizeof(clear) == result.size() && ::memcmp(clear, result.data(), result.size()) == 0;
+
     return 0;
 }

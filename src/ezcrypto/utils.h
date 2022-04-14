@@ -50,5 +50,67 @@ inline container_type& append_to_container(const element_type* src, const size_t
     }
     return dst;
 }
+
+template <typename T>
+static inline typename std::enable_if<(sizeof(T) == 8), T>::type bytes_to(
+    const uint8_t* bytes,
+    const size_t&  length,
+    bool&          success)
+{
+    if (nullptr == bytes || length < sizeof(T))
+    {
+        success = false;
+        return (T)0;
+    }
+    success = true;
+    return (bytes[0] << 56) | (bytes[1] << 48) | (bytes[2] << 40) | (bytes[3] << 32) | (bytes[4] << 24) |
+           (bytes[5] << 16) | (bytes[6] << 8) | bytes[7];
+}
+
+template <typename T>
+static inline typename std::enable_if<(sizeof(T) == 4), T>::type bytes_to(
+    const uint8_t* bytes,
+    const size_t&  length,
+    bool&          success)
+{
+    if (nullptr == bytes || length < sizeof(T))
+    {
+        success = false;
+        return (T)0;
+    }
+    success = true;
+    return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+}
+
+template <typename T>
+static inline typename std::enable_if<(sizeof(T) == 2), T>::type bytes_to(
+    const uint8_t* bytes,
+    const size_t&  length,
+    bool&          success)
+{
+    if (nullptr == bytes || length < sizeof(T))
+    {
+        success = false;
+        return (T)0;
+    }
+    success = true;
+    return (bytes[0] << 8) | bytes[1];
+}
+
+template <typename T>
+static inline typename std::enable_if<(sizeof(T) == 1), const T&>::type bytes_to(
+    const uint8_t* bytes,
+    const size_t&  length,
+    bool&          success)
+{
+    if (nullptr == bytes || length < sizeof(T))
+    {
+        success = false;
+        return (T)0;
+    }
+    success = true;
+    return bytes[0];
+}
+
 EZCRYPTO_NS_END
 #endif // !_EZCRYPTO_UTILS_H_

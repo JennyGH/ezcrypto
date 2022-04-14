@@ -20,6 +20,8 @@ CD /D %BUILD_DIR%
 
 @REM 开始构建工程
 CALL cmake -DCMAKE_BUILD_TYPE=DEBUG               ^
+           -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake ^
+           -DVCPKG_TARGET_TRIPLET=x64-windows-static                            ^
            -DCMAKE_CXX_CPPCHECK:FILEPATH=FALSE ^
            -DPACK_CONFIG_FILE="%PROJECT_ROOT%\pack\pack-nsis.cmake" ^
            -DCMAKE_INSTALL_PREFIX="%PROJECT_ROOT%\built"  ^
