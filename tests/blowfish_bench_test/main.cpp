@@ -25,14 +25,13 @@ static inline size_t _final_callback(void* context, const void* data, const size
     return length;
 }
 
-template <bool encrypt>
-static inline void blowfish_test(benchmark::State& state)
+static inline void blowfish_test(bool encrypt, benchmark::State& state)
 {
     static const ezcrypto::byte_t    key[16]  = {0x00};
     static const ezcrypto::byte_t    in[8192] = {0x00};
     static const ezcrypto::padding_t padding  = ezcrypto::padding_t::NONE;
 
-    auto   cryptor = ezcrypto::blowfish::ecb(encrypt, padding, key, sizeof(key));
+    auto   cryptor = ezcrypto::blowfish::ecb(encrypt, padding, key);
     size_t bytes   = 0;
     size_t items   = 0;
     for (auto _ : state)
@@ -47,12 +46,12 @@ static inline void blowfish_test(benchmark::State& state)
 
 static inline void blowfish_encrypt(benchmark::State& state)
 {
-    blowfish_test<true>(state);
+    blowfish_test(true, state);
 }
 
 static inline void blowfish_decrypt(benchmark::State& state)
 {
-    blowfish_test<false>(state);
+    blowfish_test(false, state);
 }
 
 BENCHMARK(blowfish_encrypt)->Unit(benchmark::kMicrosecond);

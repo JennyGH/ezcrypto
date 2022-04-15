@@ -146,9 +146,9 @@ const size_t blowfish::block_size = 8;
 
 static inline bytes_t _make_zero_padding(const bytes_t& bytes, const size_t& block_size)
 {
-    bytes_t       padding;
-    const size_t& length = bytes.size();
-    const size_t& remain = block_size - (length % block_size);
+    bytes_t      padding;
+    const size_t length = bytes.size();
+    const size_t remain = block_size - (length % block_size);
     if (remain > 0)
     {
         padding.assign(remain, 0x00);
@@ -158,9 +158,9 @@ static inline bytes_t _make_zero_padding(const bytes_t& bytes, const size_t& blo
 
 static inline bytes_t _make_pkcs7_padding(const bytes_t& bytes, const size_t& block_size)
 {
-    bytes_t       padding;
-    const size_t& length = bytes.size();
-    const size_t& remain = block_size - (length % block_size);
+    bytes_t      padding;
+    const size_t length = bytes.size();
+    const size_t remain = block_size - (length % block_size);
     if (remain > 0)
     {
         padding.assign(remain, remain);
@@ -244,13 +244,13 @@ public:
 
     ~blowfish_private() {}
 
-    uint32_t F(const uint32_t& x) const
+    inline uint32_t F(const uint32_t& x) const
     {
         uint32_t value = 0;
         value += _key_sbox[0][(x >> 24) & 0xFF];
         value += _key_sbox[1][(x >> 16) & 0xFF];
         value ^= _key_sbox[2][(x >> 8) & 0xFF];
-        value += _key_sbox[3][x & 0xFF];
+        value += _key_sbox[3][(x >> 0) & 0xFF];
         return value;
     }
 
@@ -438,11 +438,13 @@ blowfish& blowfish::update(const void* data, const size_t& length)
 
         const byte_t* current = remain_blocks;
 
-        bool success = false;
+        bool   success = false;
+        size_t offset  = _data->_output.size();
+        _data->_output.resize(offset + blocks * block_size);
+        byte_t* ptr = &_data->_output[0];
         for (size_t i = 0; i < blocks; i++)
         {
             uint32_t x[2] = {0};
-
             for (size_t i = 0; i < 2; i++)
             {
                 x[i] = bytes_to<uint32_t>(current + sizeof(uint32_t) * i, sizeof(uint32_t), success);
@@ -462,10 +464,14 @@ blowfish& blowfish::update(const void* data, const size_t& length)
                 _data->decrypt(x);
             }
 
-            x[0] = to_bigendian(x[0]);
-            x[1] = to_bigendian(x[1]);
-
-            append_to_container(x, sizeof(x), _data->_output);
+            ptr[offset++] = (x[0] >> 24) & 0xFF;
+            ptr[offset++] = (x[0] >> 16) & 0xFF;
+            ptr[offset++] = (x[0] >> 8) & 0xFF;
+            ptr[offset++] = (x[0] >> 0) & 0xFF;
+            ptr[offset++] = (x[1] >> 24) & 0xFF;
+            ptr[offset++] = (x[1] >> 16) & 0xFF;
+            ptr[offset++] = (x[1] >> 8) & 0xFF;
+            ptr[offset++] = (x[1] >> 0) & 0xFF;
 
             if (i == 0)
             {

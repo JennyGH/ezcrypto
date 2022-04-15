@@ -11,6 +11,14 @@ public:
 
 public:
     blowfish(bool encrypt, const mode_t& mode, const padding_t& padding, const byte_t* key, const size_t& key_length);
+
+    template <size_t key_length>
+    inline blowfish(bool encrypt, const mode_t& mode, const padding_t& padding, const byte_t (&key)[key_length])
+        : blowfish(encrypt, mode, padding, key, key_length)
+    {
+        // ...
+    }
+
     blowfish(const blowfish& that);
     blowfish(blowfish&& that) noexcept;
     ~blowfish();
@@ -29,6 +37,11 @@ public:
 
 public:
     static blowfish ecb(bool encrypt, const padding_t& padding, const byte_t* key, const size_t& key_length);
+    template <size_t key_length>
+    static inline blowfish ecb(bool encrypt, const padding_t& padding, const byte_t (&key)[key_length])
+    {
+        return blowfish::ecb(encrypt, padding, key, key_length);
+    }
 
 public:
     static const size_t block_size;
