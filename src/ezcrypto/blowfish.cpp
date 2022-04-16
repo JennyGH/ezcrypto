@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "blowfish.h"
 #include "utils.h"
+#include "platform_compatibility.h"
+#include "symmetric_cipher_private.h"
 
 using namespace EZCRYPTO_NS;
 
@@ -142,90 +144,16 @@ static const uint32_t SBOX[4][256] = {
      0x4CF9AA7E, 0x1948C25C, 0x02FB8A8C, 0x01C36AE4, 0xD6EBE1F9, 0x90D4F869, 0xA65CDEA0, 0x3F09252D, 0xC208E69F,
      0xB74E6132, 0xCE77E25B, 0x578FDFE3, 0x3AC372E6}};
 
-const size_t blowfish::block_size = 8;
-
-static inline bytes_t _make_zero_padding(const bytes_t& bytes, const size_t& block_size)
-{
-    bytes_t      padding;
-    const size_t length = bytes.size();
-    const size_t remain = block_size - (length % block_size);
-    if (remain > 0)
-    {
-        padding.assign(remain, 0x00);
-    }
-    return padding;
-}
-
-static inline bytes_t _make_pkcs7_padding(const bytes_t& bytes, const size_t& block_size)
-{
-    bytes_t      padding;
-    const size_t length = bytes.size();
-    const size_t remain = block_size - (length % block_size);
-    if (remain > 0)
-    {
-        padding.assign(remain, remain);
-    }
-    return padding;
-}
-
-static inline size_t _detect_padding_size(const bytes_t& bytes, const padding_t& padding_mode)
-{
-    const size_t bytes_size = bytes.size();
-    size_t       size       = 0;
-    if (bytes.empty())
-    {
-        return size;
-    }
-    switch (padding_mode)
-    {
-        case padding_t::ZERO:
-        {
-            for (size_t i = 0; i < blowfish::block_size; i++)
-            {
-                if (bytes[bytes_size - 1 - i] != 0x00)
-                {
-                    break;
-                }
-                size++;
-            }
-            break;
-        }
-        case padding_t::PKCS7:
-        {
-            const byte_t end = bytes[bytes_size - 1];
-            if (end > blowfish::block_size)
-            {
-                return size;
-            }
-            byte_t last = bytes[bytes_size - end];
-            for (size_t i = bytes_size - end; i < bytes_size; i++)
-            {
-                if (bytes[i] != last)
-                {
-                    break;
-                }
-                size++;
-            }
-            break;
-        }
-        default:
-            break;
-    }
-    return size;
-}
-
-class EZCRYPTO_NS::blowfish_private
+class EZCRYPTO_NS::blowfish_private : public symmetric_cipher_private<8>
 {
 public:
     blowfish_private(
-        bool             encrypt,
-        const mode_t&    mode,
-        const padding_t& padding,
-        const byte_t*    key,
-        const size_t&    key_length)
-        : _encrypt(encrypt)
-        , _mode(mode)
-        , _padding(padding)
+        bool             encrypt    = false,
+        const padding_t& padding    = padding_t::PKCS7,
+        const mode_t&    mode       = mode_t::ECB,
+        const byte_t*    key        = nullptr,
+        const size_t&    key_length = 0)
+        : symmetric_cipher_private<8>(encrypt, padding, mode)
     {
         ::memcpy(_key_pbox, PBOX, sizeof(PBOX));
         ::memcpy(_key_sbox, SBOX, sizeof(SBOX));
@@ -233,10 +161,7 @@ public:
     }
 
     blowfish_private(const blowfish_private& that)
-        : _encrypt(that._encrypt)
-        , _mode(that._mode)
-        , _padding(that._padding)
-        , _remain(that._remain)
+        : symmetric_cipher_private<8>(that)
     {
         ::memcpy(_key_pbox, that._key_pbox, sizeof(that._key_pbox));
         ::memcpy(_key_sbox, that._key_sbox, sizeof(that._key_sbox));
@@ -346,14 +271,35 @@ public:
         x[1] = xl;
     }
 
+    virtual void update_block(bool is_encrypt, const byte_t* in, byte_t* out) override
+    {
+        bool     success = false;
+        uint32_t x[2]    = {
+            bytes_to<uint32_t>(in + sizeof(uint32_t) * 0, sizeof(uint32_t), success),
+            bytes_to<uint32_t>(in + sizeof(uint32_t) * 1, sizeof(uint32_t), success)};
+
+        if (is_encrypt)
+        {
+            encrypt(x);
+        }
+        else
+        {
+            decrypt(x);
+        }
+
+        out[0] = (x[0] >> 24) & 0xFF;
+        out[1] = (x[0] >> 16) & 0xFF;
+        out[2] = (x[0] >> 8) & 0xFF;
+        out[3] = (x[0] >> 0) & 0xFF;
+        out[4] = (x[1] >> 24) & 0xFF;
+        out[5] = (x[1] >> 16) & 0xFF;
+        out[6] = (x[1] >> 8) & 0xFF;
+        out[7] = (x[1] >> 0) & 0xFF;
+    }
+
 public:
-    bool      _encrypt;
-    mode_t    _mode;
-    padding_t _padding;
-    bytes_t   _output;
-    bytes_t   _remain;
-    uint32_t  _key_pbox[18];
-    uint32_t  _key_sbox[4][256];
+    uint32_t _key_pbox[18];
+    uint32_t _key_sbox[4][256];
 };
 
 blowfish::blowfish(
@@ -362,16 +308,16 @@ blowfish::blowfish(
     const padding_t& padding,
     const byte_t*    key,
     const size_t&    key_length)
-    : _data(SAFE_NEW blowfish_private(encrypt, mode, padding, key, key_length))
+    : _data(SAFE_NEW blowfish_private(encrypt, padding, mode, key, key_length))
 {
 }
 
 blowfish::blowfish(const blowfish& that)
-    : _data(SAFE_NEW blowfish_private(false, mode_t::ECB, padding_t::NONE, nullptr, 0))
+    : _data(nullptr)
 {
-    if (nullptr != that._data && nullptr != _data)
+    if (nullptr != that._data)
     {
-        *_data = *that._data;
+        _data = SAFE_NEW blowfish_private(*that._data);
     }
 }
 
@@ -392,12 +338,9 @@ blowfish::~blowfish()
 
 blowfish& blowfish::operator=(const blowfish& that)
 {
-    if (&that != this)
+    if (nullptr != that._data)
     {
-        if (nullptr != that._data && nullptr != _data)
-        {
-            *_data = *that._data;
-        }
+        _data = SAFE_NEW blowfish_private(*that._data);
     }
     return *this;
 }
@@ -413,85 +356,9 @@ blowfish& blowfish::operator=(blowfish&& that) noexcept
 
 blowfish& blowfish::update(const void* data, const size_t& length)
 {
-    if (nullptr != data && length > 0 && nullptr != _data)
+    if (nullptr != _data)
     {
-        const size_t  remain_size = _data->_remain.size();
-        const size_t  total       = remain_size + length;
-        const size_t  blocks      = total / blowfish::block_size;
-        const byte_t* bytes       = static_cast<const byte_t*>(data);
-
-        if (total < blowfish::block_size)
-        {
-            append_to_container(data, length, _data->_remain);
-            return *this;
-        }
-
-        byte_t remain_blocks[blowfish::block_size] = {0};
-        {
-            safe_memcpy(_data->_remain.data(), remain_size, remain_blocks, sizeof(remain_blocks));
-            safe_memcpy(
-                data,
-                blowfish::block_size - remain_size,
-                remain_blocks + remain_size,
-                blowfish::block_size - remain_size);
-        }
-
-        const byte_t* current = remain_blocks;
-
-        bool   success = false;
-        size_t offset  = _data->_output.size();
-        _data->_output.resize(offset + blocks * block_size);
-        byte_t* ptr = &_data->_output[0];
-        for (size_t i = 0; i < blocks; i++)
-        {
-            uint32_t x[2] = {0};
-            for (size_t i = 0; i < 2; i++)
-            {
-                x[i] = bytes_to<uint32_t>(current + sizeof(uint32_t) * i, sizeof(uint32_t), success);
-                if (!success)
-                {
-                    // Bad convertion.
-                    return *this;
-                }
-            }
-
-            if (_data->_encrypt)
-            {
-                _data->encrypt(x);
-            }
-            else
-            {
-                _data->decrypt(x);
-            }
-
-            ptr[offset++] = (x[0] >> 24) & 0xFF;
-            ptr[offset++] = (x[0] >> 16) & 0xFF;
-            ptr[offset++] = (x[0] >> 8) & 0xFF;
-            ptr[offset++] = (x[0] >> 0) & 0xFF;
-            ptr[offset++] = (x[1] >> 24) & 0xFF;
-            ptr[offset++] = (x[1] >> 16) & 0xFF;
-            ptr[offset++] = (x[1] >> 8) & 0xFF;
-            ptr[offset++] = (x[1] >> 0) & 0xFF;
-
-            if (i == 0)
-            {
-                current = bytes + blowfish::block_size - remain_size;
-            }
-            else
-            {
-                current += blowfish::block_size;
-            }
-        }
-
-        const size_t remain_bytes = total % blowfish::block_size;
-        if (remain_bytes > 0)
-        {
-            _data->_remain.assign(bytes + length - remain_bytes, bytes + length);
-        }
-        else
-        {
-            _data->_remain.clear();
-        }
+        _data->update(data, length);
     }
     return *this;
 }
@@ -502,45 +369,7 @@ size_t blowfish::final(final_callback_t callback, void* context)
     {
         return 0;
     }
-
-    size_t output_size = 0;
-    if (_data->_encrypt)
-    {
-        if (!_data->_remain.empty() || !_data->_output.empty())
-        {
-            switch (_data->_padding)
-            {
-                case padding_t::ZERO:
-                {
-                    update(_make_zero_padding(_data->_remain, blowfish::block_size));
-                    break;
-                }
-                case padding_t::PKCS7:
-                {
-                    update(_make_pkcs7_padding(_data->_remain, blowfish::block_size));
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-        output_size = _data->_output.size();
-    }
-    else
-    {
-        const size_t padding_size = _detect_padding_size(_data->_output, _data->_padding);
-        output_size               = _data->_output.size() - padding_size;
-    }
-
-    if (nullptr != callback && output_size > 0)
-    {
-        output_size = callback(context, _data->_output.data(), output_size);
-    }
-
-    _data->_output.clear();
-    _data->_remain.clear();
-
-    return output_size;
+    return _data->final(callback, context);
 }
 
 blowfish blowfish::ecb(bool encrypt, const padding_t& padding, const byte_t* key, const size_t& key_length)

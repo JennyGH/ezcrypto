@@ -6,13 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if _MSC_VER
-#    include <Windows.h>
-#    define snprintf _snprintf
-#else
-#    include <unistd.h>
-#endif // _MSC_VER
-
 static inline size_t _final_callback(void* context, const void* data, const size_t& length)
 {
     const ezcrypto::byte_t* bytes  = static_cast<const ezcrypto::byte_t*>(data);

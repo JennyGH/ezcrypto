@@ -1,8 +1,9 @@
 #ifndef _EZCRYPTO_UTILS_H_
 #define _EZCRYPTO_UTILS_H_
 #include "ezcrypto.h"
+#include "platform_compatibility.h"
 EZCRYPTO_NS_BEGIN
-size_t safe_memcpy(const void* src, const size_t& src_size, void* dst, const size_t& dst_size);
+size_t detect_padding_size(const bytes_t& bytes, const padding_t& padding_mode, const size_t& block_size);
 bool   is_bigendian();
 template <typename T>
 inline typename std::enable_if<(sizeof(T) == 1), const T&>::type to_bigendian(const T& in)
@@ -38,21 +39,8 @@ inline typename std::enable_if<(sizeof(T) == 8), T>::type to_bigendian(const T& 
            ((in & 0x00000000FF000000) << 8) | ((in & 0x000000FF00000000) >> 8) | ((in & 0x0000FF0000000000) >> 24) |
            ((in & 0x00FF000000000000) >> 40) | ((in & 0xFF00000000000000) >> 56);
 }
-
-template <typename container_type, typename element_type>
-inline container_type& append_to_container(const element_type* src, const size_t& size, container_type& dst)
-{
-    if (nullptr != src && size > 0)
-    {
-        const size_t offset = dst.size();
-        dst.resize(offset + size);
-        safe_memcpy(src, size, &dst[offset], size);
-    }
-    return dst;
-}
-
 template <typename T>
-static inline typename std::enable_if<(sizeof(T) == 8), T>::type bytes_to(
+inline typename std::enable_if<(sizeof(T) == 8), T>::type bytes_to(
     const uint8_t* bytes,
     const size_t&  length,
     bool&          success)
@@ -63,12 +51,29 @@ static inline typename std::enable_if<(sizeof(T) == 8), T>::type bytes_to(
         return (T)0;
     }
     success = true;
-    return (bytes[0] << 56) | (bytes[1] << 48) | (bytes[2] << 40) | (bytes[3] << 32) | (bytes[4] << 24) |
-           (bytes[5] << 16) | (bytes[6] << 8) | bytes[7];
+    T value = 0;
+    value |= bytes[0];
+    value <<= 8;
+    value |= bytes[1];
+    value <<= 8;
+    value |= bytes[2];
+    value <<= 8;
+    value |= bytes[3];
+    value <<= 8;
+    value |= bytes[4];
+    value <<= 8;
+    value |= bytes[5];
+    value <<= 8;
+    value |= bytes[6];
+    value <<= 8;
+    value |= bytes[7];
+    return value;
+    // return (bytes[0] << 56) | (bytes[1] << 48) | (bytes[2] << 40) | (bytes[3] << 32) | (bytes[4] << 24) |
+    //        (bytes[5] << 16) | (bytes[6] << 8) | bytes[7];
 }
 
 template <typename T>
-static inline typename std::enable_if<(sizeof(T) == 4), T>::type bytes_to(
+inline typename std::enable_if<(sizeof(T) == 4), T>::type bytes_to(
     const uint8_t* bytes,
     const size_t&  length,
     bool&          success)
@@ -79,11 +84,20 @@ static inline typename std::enable_if<(sizeof(T) == 4), T>::type bytes_to(
         return (T)0;
     }
     success = true;
-    return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+    T value = 0;
+    value |= bytes[0];
+    value <<= 8;
+    value |= bytes[1];
+    value <<= 8;
+    value |= bytes[2];
+    value <<= 8;
+    value |= bytes[3];
+    return value;
+    // return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
 }
 
 template <typename T>
-static inline typename std::enable_if<(sizeof(T) == 2), T>::type bytes_to(
+inline typename std::enable_if<(sizeof(T) == 2), T>::type bytes_to(
     const uint8_t* bytes,
     const size_t&  length,
     bool&          success)
@@ -94,11 +108,16 @@ static inline typename std::enable_if<(sizeof(T) == 2), T>::type bytes_to(
         return (T)0;
     }
     success = true;
-    return (bytes[0] << 8) | bytes[1];
+    T value = 0;
+    value |= bytes[0];
+    value <<= 8;
+    value |= bytes[1];
+    return value;
+    // return (bytes[0] << 8) | bytes[1];
 }
 
 template <typename T>
-static inline typename std::enable_if<(sizeof(T) == 1), const T&>::type bytes_to(
+inline typename std::enable_if<(sizeof(T) == 1), const T&>::type bytes_to(
     const uint8_t* bytes,
     const size_t&  length,
     bool&          success)
@@ -110,6 +129,50 @@ static inline typename std::enable_if<(sizeof(T) == 1), const T&>::type bytes_to
     }
     success = true;
     return bytes[0];
+}
+
+template <typename T, size_t L>
+inline T bytes_to(const uint8_t (&bytes)[L])
+{
+    bool success = false;
+    return bytes_to<T>(bytes, L, success);
+}
+
+template <size_t block_size>
+inline size_t make_zero_padding(byte_t (&dst)[block_size], const size_t& dst_current_size)
+{
+    const size_t remain = block_size - (dst_current_size % block_size);
+    if (remain > 0)
+    {
+        ::memset(dst + dst_current_size, 0x00, remain);
+    }
+    return remain;
+}
+
+template <size_t block_size>
+inline size_t make_pkcs7_padding(byte_t (&dst)[block_size], const size_t& dst_current_size)
+{
+    const size_t remain = block_size - (dst_current_size % block_size);
+    if (remain > 0)
+    {
+        ::memset(dst + dst_current_size, remain & 0xFF, remain);
+    }
+    return remain;
+}
+
+template <size_t block_size>
+inline size_t make_padding(const padding_t& padding, byte_t (&dst)[block_size], const size_t& dst_current_size)
+{
+    switch (padding)
+    {
+        case padding_t::ZERO:
+            return make_zero_padding(dst, dst_current_size);
+        case padding_t::PKCS7:
+            return make_pkcs7_padding(dst, dst_current_size);
+        default:
+            break;
+    }
+    return 0;
 }
 
 EZCRYPTO_NS_END

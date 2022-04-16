@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "sm4.h"
 #include "utils.h"
+#include "platform_compatibility.h"
+#include "symmetric_cipher_private.h"
 
 #define HEX(obj)  _hex_encode(obj)
 #define CHEX(obj) _hex_encode(obj).c_str()
@@ -30,8 +32,6 @@ static const byte_t SBOX[] = {
     0xc1, 0x31, 0x88, 0xa5, 0xcd, 0x7b, 0xbd, 0x2d, 0x74, 0xd0, 0x12, 0xb8, 0xe5, 0xb4, 0xb0, 0x89, 0x69, 0x97, 0x4a,
     0x0c, 0x96, 0x77, 0x7e, 0x65, 0xb9, 0xf1, 0x09, 0xc5, 0x6e, 0xc6, 0x84, 0x18, 0xf0, 0x7d, 0xec, 0x3a, 0xdc, 0x4d,
     0x20, 0x79, 0xee, 0x5f, 0x3e, 0xd7, 0xcb, 0x39, 0x48};
-
-const size_t sm4::block_size = 16;
 
 static inline std::string _hex_encode(byte_t e)
 {
@@ -145,64 +145,6 @@ static inline bytes_t _make_zero_padding(const bytes_t& bytes, const size_t& blo
     return padding;
 }
 
-static inline bytes_t _make_pkcs7_padding(const bytes_t& bytes, const size_t& block_size)
-{
-    bytes_t       padding;
-    const size_t& length = bytes.size();
-    const size_t& remain = block_size - (length % block_size);
-    if (remain > 0)
-    {
-        padding.assign(remain, remain);
-    }
-    return padding;
-}
-
-static inline size_t _detect_padding_size(const bytes_t& bytes, const padding_t& padding_mode)
-{
-    const size_t bytes_size = bytes.size();
-    size_t       size       = 0;
-    if (bytes.empty())
-    {
-        return size;
-    }
-    switch (padding_mode)
-    {
-        case padding_t::ZERO:
-        {
-            for (size_t i = bytes_size - 1; i > 0; i--)
-            {
-                if (bytes[i] != 0x00)
-                {
-                    break;
-                }
-                size++;
-            }
-            break;
-        }
-        case padding_t::PKCS7:
-        {
-            const byte_t end = bytes[bytes_size - 1];
-            if (end > bytes_size)
-            {
-                return size;
-            }
-            byte_t last = bytes[bytes_size - end];
-            for (size_t i = bytes_size - end; i < bytes_size; i++)
-            {
-                if (bytes[i] != last)
-                {
-                    break;
-                }
-                size++;
-            }
-            break;
-        }
-        default:
-            break;
-    }
-    return size;
-}
-
 static inline word_t _bytes_to_word(const byte_t* bytes, const size_t& length, bool& success)
 {
     return bytes_to<word_t>(bytes, length, success);
@@ -255,38 +197,84 @@ static inline words_t _init_key(const byte_t* MK, const size_t& MK_length)
     return words;
 }
 
-class EZCRYPTO_NS::sm4_private
+class EZCRYPTO_NS::sm4_private : public symmetric_cipher_private<16>
 {
 public:
-    sm4_private()
-        : _encrypt(false)
-        , _mode(mode_t::ECB)
-        , _padding(padding_t::PKCS7)
+    sm4_private(
+        bool             encrypt    = false,
+        const padding_t& padding    = padding_t::PKCS7,
+        const mode_t&    mode       = mode_t::ECB,
+        const byte_t*    key        = nullptr,
+        const size_t&    key_length = 0,
+        const byte_t*    iv         = nullptr,
+        const size_t&    iv_length  = 0)
+        : symmetric_cipher_private<16>(encrypt, padding, mode)
     {
+        if (nullptr != key && key_length > 0)
+        {
+            _key = _init_key(key, key_length);
+            _rks = _rks_generator(_key);
+        }
+
+        bool success = false;
+        if (nullptr != iv && iv_length > 0)
+        {
+            _iv = _bytes_to_words(iv, iv_length, success);
+        }
     }
 
     sm4_private(const sm4_private& that)
-        : _encrypt(that._encrypt)
-        , _mode(that._mode)
-        , _padding(that._padding)
+        : symmetric_cipher_private<16>(that)
         , _key(that._key)
         , _iv(that._iv)
         , _rks(that._rks)
-        , _remain(that._remain)
     {
     }
 
     ~sm4_private() {}
 
-public:
-    bool      _encrypt;
-    mode_t    _mode;
-    padding_t _padding;
-    words_t   _key;
-    words_t   _iv;
-    words_t   _rks;
-    bytes_t   _output;
-    bytes_t   _remain;
+    virtual void update_block(bool is_encrypt, const byte_t* in, byte_t* out) override
+    {
+        bool success = false;
+
+        word_t x[4] = {
+            _bytes_to_word(in + sizeof(word_t) * 0, sizeof(word_t), success),
+            _bytes_to_word(in + sizeof(word_t) * 1, sizeof(word_t), success),
+            _bytes_to_word(in + sizeof(word_t) * 2, sizeof(word_t), success),
+            _bytes_to_word(in + sizeof(word_t) * 3, sizeof(word_t), success)};
+
+        for (size_t i = 0; i < 32; i++)
+        {
+            const word_t& rki = _rks[is_encrypt ? i : (31 - i)];
+            const word_t  Xi  = _F(x[0], x[1], x[2], x[3], rki);
+            x[0]              = x[1];
+            x[1]              = x[2];
+            x[2]              = x[3];
+            x[3]              = Xi;
+        }
+
+        out[0]  = (x[3] >> 24) & 0xFF;
+        out[1]  = (x[3] >> 16) & 0xFF;
+        out[2]  = (x[3] >> 8) & 0xFF;
+        out[3]  = (x[3] >> 0) & 0xFF;
+        out[4]  = (x[2] >> 24) & 0xFF;
+        out[5]  = (x[2] >> 16) & 0xFF;
+        out[6]  = (x[2] >> 8) & 0xFF;
+        out[7]  = (x[2] >> 0) & 0xFF;
+        out[8]  = (x[1] >> 24) & 0xFF;
+        out[9]  = (x[1] >> 16) & 0xFF;
+        out[10] = (x[1] >> 8) & 0xFF;
+        out[11] = (x[1] >> 0) & 0xFF;
+        out[12] = (x[0] >> 24) & 0xFF;
+        out[13] = (x[0] >> 16) & 0xFF;
+        out[14] = (x[0] >> 8) & 0xFF;
+        out[15] = (x[0] >> 0) & 0xFF;
+    }
+
+private:
+    words_t _key;
+    words_t _iv;
+    words_t _rks;
 };
 
 sm4::sm4(
@@ -297,32 +285,16 @@ sm4::sm4(
     const size_t&    key_length,
     const byte_t*    iv,
     const size_t&    iv_length)
-    : _data(SAFE_NEW sm4_private())
+    : _data(SAFE_NEW sm4_private(encrypt, padding, mode, key, key_length, iv, iv_length))
 {
-    if (nullptr != _data)
-    {
-        _data->_mode    = mode;
-        _data->_encrypt = encrypt;
-        if (nullptr != key && key_length > 0)
-        {
-            _data->_key = _init_key(key, key_length);
-            _data->_rks = _rks_generator(_data->_key);
-        }
-        if (nullptr != iv && iv_length > 0)
-        {
-            bool success = false;
-            _data->_iv   = _bytes_to_words(iv, iv_length, success);
-        }
-        _data->_padding = padding;
-    }
 }
 
 sm4::sm4(const sm4& that)
-    : _data(SAFE_NEW sm4_private())
+    : _data(nullptr)
 {
-    if (nullptr != that._data && nullptr != _data)
+    if (nullptr != that._data)
     {
-        *_data = *that._data;
+        _data = SAFE_NEW sm4_private(*that._data);
     }
 }
 
@@ -343,12 +315,9 @@ sm4::~sm4()
 
 sm4& sm4::operator=(const sm4& that)
 {
-    if (&that != this)
+    if (nullptr != that._data)
     {
-        if (nullptr != that._data && nullptr != _data)
-        {
-            *_data = *that._data;
-        }
+        _data = SAFE_NEW sm4_private(*that._data);
     }
     return *this;
 }
@@ -364,84 +333,9 @@ sm4& sm4::operator=(sm4&& that) noexcept
 
 sm4& sm4::update(const void* data, const size_t& length)
 {
-    if (nullptr != data && length > 0 && nullptr != _data)
+    if (nullptr != _data)
     {
-        const size_t  remain_size = _data->_remain.size();
-        const size_t  total       = remain_size + length;
-        const size_t  blocks      = total / sm4::block_size;
-        const byte_t* bytes       = static_cast<const byte_t*>(data);
-
-        if (total < sm4::block_size)
-        {
-            append_to_container(data, length, _data->_remain);
-            return *this;
-        }
-
-        byte_t remain_blocks[sm4::block_size] = {0};
-        {
-            safe_memcpy(_data->_remain.data(), remain_size, remain_blocks, sizeof(remain_blocks));
-            safe_memcpy(
-                data,
-                sm4::block_size - remain_size,
-                remain_blocks + remain_size,
-                sm4::block_size - remain_size);
-        }
-
-        const byte_t* current = remain_blocks;
-
-        bool success = false;
-        for (size_t i = 0; i < blocks; i++)
-        {
-            word_t X[4] = {0};
-
-            for (size_t i = 0; i < 4; i++)
-            {
-                X[i] = _bytes_to_word(current + sizeof(word_t) * i, sizeof(word_t), success);
-                if (!success)
-                {
-                    return *this;
-                }
-            }
-
-            for (size_t i = 0; i < 32; i++)
-            {
-                const word_t& rki = _data->_rks[_data->_encrypt ? i : (31 - i)];
-                const word_t  Xi  = _F(X[0], X[1], X[2], X[3], rki);
-                X[0]              = X[1];
-                X[1]              = X[2];
-                X[2]              = X[3];
-                X[3]              = Xi;
-            }
-
-            X[0] = to_bigendian(X[0]);
-            X[1] = to_bigendian(X[1]);
-            X[2] = to_bigendian(X[2]);
-            X[3] = to_bigendian(X[3]);
-
-            std::swap(X[3], X[0]);
-            std::swap(X[2], X[1]);
-
-            append_to_container(X, sizeof(X), _data->_output);
-
-            if (i == 0)
-            {
-                current = bytes + sm4::block_size - remain_size;
-            }
-            else
-            {
-                current += sm4::block_size;
-            }
-        }
-
-        const size_t remain_bytes = total % sm4::block_size;
-        if (remain_bytes > 0)
-        {
-            _data->_remain.assign(bytes + length - remain_bytes, bytes + length);
-        }
-        else
-        {
-            _data->_remain.clear();
-        }
+        _data->update(data, length);
     }
     return *this;
 }
@@ -452,45 +346,7 @@ size_t sm4::final(final_callback_t callback, void* context)
     {
         return 0;
     }
-
-    size_t output_size = 0;
-    if (_data->_encrypt)
-    {
-        if (!_data->_remain.empty() || !_data->_output.empty())
-        {
-            switch (_data->_padding)
-            {
-                case padding_t::ZERO:
-                {
-                    update(_make_zero_padding(_data->_remain, sm4::block_size));
-                    break;
-                }
-                case padding_t::PKCS7:
-                {
-                    update(_make_pkcs7_padding(_data->_remain, sm4::block_size));
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-        output_size = _data->_output.size();
-    }
-    else
-    {
-        const size_t padding_size = _detect_padding_size(_data->_output, _data->_padding);
-        output_size               = _data->_output.size() - padding_size;
-    }
-
-    if (nullptr != callback && output_size > 0)
-    {
-        output_size = callback(context, _data->_output.data(), output_size);
-    }
-
-    _data->_output.clear();
-    _data->_remain.clear();
-
-    return output_size;
+    return _data->final(callback, context);
 }
 
 sm4 sm4::ecb(bool encrypt, const padding_t& padding, const byte_t* key, const size_t& key_length)

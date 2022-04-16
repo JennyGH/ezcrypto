@@ -1,36 +1,8 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <ezcrypto.h>
 #include <sm4.h>
-
-static inline std::string _hex_encode(ezcrypto::byte_t e)
-{
-    std::string hex;
-    char        buffer[3] = {0};
-    ::sprintf_s(buffer, "%02x", e);
-    hex.append(buffer, 2);
-    return hex;
-}
-
-static inline std::string _hex_encode(ezcrypto::word_t w)
-{
-    std::string hex;
-    char        buffer[9] = {0};
-    ::sprintf_s(buffer, "%08x", w);
-    hex.append(buffer, 8);
-    return hex;
-}
-
-template <typename container_type>
-static inline std::string _hex_encode(const container_type& src)
-{
-    std::string hex;
-    for (const auto& e : src)
-    {
-        hex.append(_hex_encode(e));
-    }
-    return hex;
-}
 
 static inline size_t _final_callback(void* context, const void* data, const size_t& length)
 {
@@ -49,23 +21,31 @@ int main(int argc, char** argv)
     static const ezcrypto::byte_t key[16] = {0x00};
     static const ezcrypto::byte_t clear[] =
         {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f};
+    static const ezcrypto::byte_t cipher[] =
+        {0x56, 0x8f, 0xe6, 0x67, 0xfa, 0xd9, 0x24, 0x31, 0xac, 0xf9, 0x5b, 0xe0, 0xe3, 0x5e, 0xed, 0xd5};
     static const ezcrypto::padding_t padding = ezcrypto::padding_t::PKCS7;
 
-    ezcrypto::bytes_t cipher;
+    ezcrypto::bytes_t encrypted;
+    ezcrypto::sm4::ecb(true, padding, key).update(clear).final(_final_callback, &encrypted);
+    if (sizeof(cipher) != encrypted.size())
     {
-        ezcrypto::sm4::ecb(true, padding, key, sizeof(key))
-            .update(clear, sizeof(clear))
-            .final(_final_callback, &cipher);
+        return -1;
+    }
+    if (::memcmp(cipher, encrypted.data(), encrypted.size()) != 0)
+    {
+        return -1;
     }
 
-    ezcrypto::bytes_t result;
+    ezcrypto::bytes_t decrypted;
+    ezcrypto::sm4::ecb(false, padding, key).update(cipher).final(_final_callback, &decrypted);
+    if (sizeof(clear) != decrypted.size())
     {
-        ezcrypto::sm4::ecb(false, padding, key, sizeof(key))
-            .update(cipher.data(), cipher.size())
-            .final(_final_callback, &result);
+        return -1;
     }
-
-    const bool correct = sizeof(clear) == result.size() && ::memcmp(clear, result.data(), result.size()) == 0;
+    if (::memcmp(clear, decrypted.data(), decrypted.size()) != 0)
+    {
+        return -1;
+    }
 
     return 0;
 }
